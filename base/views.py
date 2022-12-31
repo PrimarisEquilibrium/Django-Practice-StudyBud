@@ -1,19 +1,125 @@
 from django.shortcuts import render, redirect
-from .models import Room
+from django.http import HttpResponse
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.db.models import Q
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.forms import UserCreationForm
+from .models import Room, Topic, Message
 from .forms import RoomForm
 
 # Create your views here.
 
+def loginPage(request):
+    page = "login"
+
+    # Checks if the user is already authenticated
+    if request.user.is_authenticated:
+        return redirect("home")
+
+    if request.method == "POST":
+
+        # Extracts POST data from HTML name attributes
+        username = request.POST.get("username").lower()
+        password = request.POST.get("password")
+
+        # Checks if the user already exists
+        try:
+            user = User.objects.get(username=username)
+        except:
+            messages.error(request, "User does not exist")
+        
+        # Verifies the credientials they send are valid
+        user = authenticate(request, username=username, password=password)
+
+        if user is not None:
+
+            # Adds their user session to the browser
+            login(request, user)
+            return redirect("home")
+        else:
+            messages.error(request, "Username OR password does not exist")
+
+    context = {"page": page}
+    return render(request, "base/login_register.html", context)
+
+def logoutPage(request):
+    logout(request)
+    return redirect("home")
+
+def registerPage(request):
+    form = UserCreationForm()
+
+    if request.method == "POST":
+        form = UserCreationForm(request.POST)
+        if form.is_valid():
+
+            # Creates the user but does not add it to the database
+            user = form.save(commit=False)
+            user.username = user.username.lower()
+            user.save()
+            login(request, user)
+            return redirect("home")
+        else:
+            messages.error(request, "An error occured during registration")
+
+    return render(request, "base/login_register.html", {"form": form})
+
 def home(request):
-    rooms = Room.objects.all()
-    context = {"rooms": rooms}
+
+    # "q" is the query used when a GET request is sent (?q=Python) -> Python
+    # else "" -> used to prevent a None query search, queries all values instead
+    q = request.GET.get("q") if request.GET.get("q") != None else ""
+
+    # icontains is a smart search based on the letters that match
+    # Q allows use to use conditional logic within a filter
+    rooms = Room.objects.filter(
+        Q(topic__name__icontains=q) |
+        Q(name__icontains=q) |
+        Q(description__icontains=q)
+    )
+
+    topics = Topic.objects.all()
+    room_count = rooms.count()
+    room_messages = Message.objects.filter(Q(room__topic__name__icontains=q))
+
+    context = {"rooms": rooms, "topics": topics, "room_count": room_count, "room_messages": room_messages}
     return render(request, "base/home.html", context)
 
 def room(request, pk):
     room = Room.objects.get(id=pk)
-    context = {"room": room}
+
+    # Queries child objects of a model
+    # Eg. message has a room, room can get all messages that link to that room
+    room_messages = room.message_set.all()
+    participants = room.participants.all()
+
+    if request.method == "POST":
+
+        # create() creates a database object, arguments are the model fields
+        message = Message.objects.create(
+            user = request.user,
+            room = room,
+            body = request.POST.get("body")
+        )
+
+        # Adds -> Many-to-many: Adds a user to the many to many relationship
+        room.participants.add(request.user)
+        return redirect("room", pk=room.id)
+
+    context = {"room": room, "room_messages": room_messages, "participants": participants}
     return render(request, "base/room.html", context)
 
+def userProfile(request, pk):
+    user = User.objects.get(id=pk)
+    rooms = user.room_set.all()
+    room_messages = user.message_set.all()
+    topics = Topic.objects.all()
+    context = {"user": user, "rooms": rooms, "room_messages": room_messages, "topics": topics}
+    return render(request, "base/profile.html", context)
+
+@login_required(login_url="login")
 def createRoom(request):
     form = RoomForm()
     if request.method == "POST":
@@ -30,11 +136,16 @@ def createRoom(request):
     context = {"form": form}
     return render(request, "base/room_form.html", context)
 
+@login_required(login_url="login")
 def updateRoom(request, pk):
     room = Room.objects.get(id=pk)
 
     # Prefills data with existing room fields
     form = RoomForm(instance=room)
+
+    # Compares the user with the room host, if they are not the host show an error
+    if request.user != room.host:
+        return HttpResponse("You are not allowed here")
 
     if request.method == "POST":
 
@@ -48,8 +159,13 @@ def updateRoom(request, pk):
     context = {"form": form}
     return render(request, "base/room_form.html", context)
 
+@login_required(login_url="login")
 def deleteRoom(request, pk):
     room = Room.objects.get(id=pk)
+
+    if request.user != room.host:
+        return HttpResponse("You are not allowed here")
+
     if request.method == "POST":
 
         # Objects have a delete property that can delete elements from the database
@@ -57,3 +173,16 @@ def deleteRoom(request, pk):
         return redirect("home")
 
     return render(request, "base/delete.html", {"obj": room})
+
+@login_required(login_url="login")
+def deleteMessage(request, pk):
+    message = Message.objects.get(id=pk)
+
+    if request.user != message.user:
+        return HttpResponse("You are not allowed here")
+
+    if request.method == "POST":
+        message.delete()
+        return redirect("home")
+
+    return render(request, "base/delete.html", {"obj": message})
