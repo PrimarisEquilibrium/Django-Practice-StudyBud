@@ -44,9 +44,11 @@ def loginPage(request):
     context = {"page": page}
     return render(request, "base/login_register.html", context)
 
+
 def logoutPage(request):
     logout(request)
     return redirect("home")
+
 
 def registerPage(request):
     form = UserCreationForm()
@@ -65,6 +67,7 @@ def registerPage(request):
             messages.error(request, "An error occured during registration")
 
     return render(request, "base/login_register.html", {"form": form})
+
 
 def home(request):
 
@@ -86,6 +89,7 @@ def home(request):
 
     context = {"rooms": rooms, "topics": topics, "room_count": room_count, "room_messages": room_messages}
     return render(request, "base/home.html", context)
+
 
 def room(request, pk):
     room = Room.objects.get(id=pk)
@@ -111,6 +115,7 @@ def room(request, pk):
     context = {"room": room, "room_messages": room_messages, "participants": participants}
     return render(request, "base/room.html", context)
 
+
 def userProfile(request, pk):
     user = User.objects.get(id=pk)
     rooms = user.room_set.all()
@@ -119,26 +124,40 @@ def userProfile(request, pk):
     context = {"user": user, "rooms": rooms, "room_messages": room_messages, "topics": topics}
     return render(request, "base/profile.html", context)
 
+
 @login_required(login_url="login")
 def createRoom(request):
     form = RoomForm()
+    topics = Topic.objects.all()
     if request.method == "POST":
-        
-        # Extracts all POST values from the form
-        form = RoomForm(request.POST)
-        if form.is_valid():
+        topic_name = request.POST.get("topic")
 
-            # Saves the data to the database
-            form.save()
-            return redirect("home")
+        # Either gets or creates the given object
+        # topic if exists will be assigned topic
+        # created will be false
+        # OR
+        # topic will be created and assigned a value
+        # created will be true
+        topic, created = Topic.objects.get_or_create(name=topic_name)
+
+        Room.objects.create(
+            host = request.user,
+            topic = topic,
+            name = request.POST.get("name"),
+            description = request.POST.get("description")
+        )
+
+        return redirect("home")
 
 
-    context = {"form": form}
+    context = {"form": form, "topics": topics}
     return render(request, "base/room_form.html", context)
+
 
 @login_required(login_url="login")
 def updateRoom(request, pk):
     room = Room.objects.get(id=pk)
+    topics = Topic.objects.all()
 
     # Prefills data with existing room fields
     form = RoomForm(instance=room)
@@ -148,16 +167,17 @@ def updateRoom(request, pk):
         return HttpResponse("You are not allowed here")
 
     if request.method == "POST":
+        topic_name = request.POST.get("topic")
+        topic, created = Topic.objects.get_or_create(name=topic_name)
+        room.name = request.POST.get("name")
+        room.topic = topic
+        room.description = request.POST.get("description")
+        room.save()
+        return redirect("home")
 
-        # When recieving form data you can pass an instance to determine what ID to update
-        # Note: By using an instance you convert the creation to an override
-        form = RoomForm(request.POST, instance=room)
-        if form.is_valid():
-            form.save()
-            return redirect("home")
-
-    context = {"form": form}
+    context = {"form": form, "topics": topics, "room": room}
     return render(request, "base/room_form.html", context)
+
 
 @login_required(login_url="login")
 def deleteRoom(request, pk):
@@ -173,6 +193,7 @@ def deleteRoom(request, pk):
         return redirect("home")
 
     return render(request, "base/delete.html", {"obj": room})
+
 
 @login_required(login_url="login")
 def deleteMessage(request, pk):
